@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>努努大冒險</title>
+<style>
+body { margin:0; display:flex; justify-content:center; align-items:center; height:100vh; background:#87ceeb; }
+canvas { background:#9ed0ff; border-radius:20px; }
+</style>
+</head>
+<body>
+
+<canvas id="game" width="900" height="420"></canvas>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+const dog = { x: 150, y: 260, w: 90, h: 70 };
+
+function drawDog() {
+  ctx.save();
+
+  // ⭐ 正確翻轉方式（以狗的中心為基準）
+  ctx.translate(dog.x + dog.w / 2, 0);
+  ctx.scale(-1, 1);
+  ctx.translate(-(dog.x + dog.w / 2), 0);
+
+  const x = dog.x;
+  const y = dog.y;
+
+  // 身體
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(x+20, y+30, 60, 30);
+
+  // 腿
+  ctx.strokeStyle = "#fff";
+  ctx.lineWidth = 8;
+  ctx.beginPath();
+  ctx.moveTo(x+35, y+60);
+  ctx.lineTo(x+30, y+75);
+  ctx.moveTo(x+60, y+60);
+  ctx.lineTo(x+65, y+75);
+  ctx.stroke();
+
+  // 尾巴
+  ctx.strokeStyle = "#fff";
+  ctx.beginPath();
+  ctx.moveTo(x+80, y+35);
+  ctx.lineTo(x+100, y+25);
+  ctx.stroke();
+
+  // 頭（會被翻到右邊）
+  ctx.fillStyle = "#8B5A2B";
+  ctx.beginPath();
+  ctx.arc(x+25, y+25, 20, 0, Math.PI*2);
+  ctx.fill();
+
+  // 耳朵
+  ctx.fillStyle = "#6a3f28";
+  ctx.beginPath();
+  ctx.moveTo(x+10, y+10);
+  ctx.lineTo(x+5, y-15);
+  ctx.lineTo(x+20, y+5);
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.moveTo(x+35, y+10);
+  ctx.lineTo(x+45, y-15);
+  ctx.lineTo(x+45, y+10);
+  ctx.fill();
+
+  // 鼻子
+  ctx.fillStyle = "#000";
+  ctx.beginPath();
+  ctx.arc(x+40, y+30, 3, 0, Math.PI*2);
+  ctx.fill();
+
+  ctx.restore();
+}
+
+function draw() {
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+
+  // 草地
+  ctx.fillStyle = "#6cc04a";
+  ctx.fillRect(0,300,900,120);
+
+  drawDog();
+}
+
+draw();
+</script>
+
+</body>
+</html>
