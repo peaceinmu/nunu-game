@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+<title>努努大冒險</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    height: 100%;
+    overscroll-behavior: none;
+    touch-action: manipulation;
+  }
+  body {
+    min-height: 100svh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background: linear-gradient(#bfe9ff, #f7f0d6);
+    font-family: "Microsoft JhengHei", system-ui, sans-serif;
+    overflow: hidden;
+  }
+  #gameWrap {
+    width: min(960px, 96vw);
+    text-align: center;
+  }
+  canvas {
+    width: 100%;
+    max-height: 70vh;
+    background: linear-gradient(#92d8ff 0%, #c7f2ff 55%, #92d56f 56%, #61b94d 100%);
+    border: 6px solid #fff4d8;
+    border-radius: 22px;
+    box-shadow: 0 16px 40px rgba(0,0,0,.18);
+  }
+  .hint {
+    margin-top: 10px;
+    color: #5f4b32;
+    font-weight: 700;
+  }
+  #jumpBtn {
+    display: none;
+    margin: 12px auto 0;
+    width: min(86vw, 360px);
+    height: 58px;
+    border: 0;
+    border-radius: 999px;
+    background: #fff4d8;
+    color: #6b3f27;
+    font: 900 22px "Microsoft JhengHei", system-ui, sans-serif;
+    box-shadow: 0 8px 18px rgba(0,0,0,.16);
+  }
+  #jumpBtn:active { transform: translateY(2px); }
+  @media (max-width: 700px) {
+    body { align-items: flex-start; padding-top: 8px; }
+    #gameWrap { width: 100vw; padding: 0 8px; }
+    canvas { max-height: 68svh; border-width: 4px; border-radius: 16px; touch-action: none; }
+    .hint { font-size: 14px; line-height: 1.4; }
+    #jumpBtn { display: block; }
+  }
+</style>
+</head>
+<body>
+<div id="gameWrap">
+  <canvas id="game" width="900" height="420"></canvas>
+  <button id="jumpBtn" type="button">跳一下！</button>
+  <div class="hint">電腦：空白鍵 / 滑鼠點擊　｜　手機：點畫面或按「跳一下！」</div>
+</div>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const jumpBtn = document.getElementById('jumpBtn');
+
+let state = 'start';
+let score = 0;
+let best = Number(localStorage.getItem('nunuBest') || 0);
+let frame = 0;
+let speed = 6;
+let obstacles = [];
+let coins = [];
+let clouds = [];
+
+const groundY = 315;
+const dog = {
+  x: 115, y: groundY - 72, w: 92, h: 72,
+  vy: 0, gravity: 0.75, jump: -14.5,
+  onGround: true
+};
+
+for (let i = 0; i < 5; i++) {
+  clouds.push({ x: i * 210 + 60, y: 45 + Math.random() * 80, s: .7 + Math.random() * .6 });
+}
+
+function reset() {
+  state = 'playing';
+  score = 0; frame = 0; speed = 6;
+  obstacles = []; coins = [];
+  dog.y = groundY - dog.h; dog.vy = 0; dog.onGround = true;
+}
+
+function jump() {
+  if (state === 'start' || state === 'gameover') { reset(); return; }
+  if (dog.onGround) {
+    dog.vy = dog.jump;
+    dog.onGround = false;
+  }
+}
+
+document.addEventListener('keydown', e => {
+  if (e.code === 'Space') { e.preventDefault(); jump(); }
+  if (e.key.toLowerCase() === 'r') reset();
+});
+function doJump(e) {
+  if (e) e.preventDefault();
+  jump();
+}
+canvas.addEventListener('pointerdown', doJump, { passive: false });
+jumpBtn.addEventListener('pointerdown', doJump, { passive: false });
+window.addEventListener('touchmove', e => e.preventDefault(), { passive: false });
+
+function spawn() {
+  if (frame % Math.max(55, 95 - Math.floor(speed * 4)) === 0) {
+    const h = 32 + Math.random() * 24;
+    obstacles.push({ x: canvas.width + 20, y: groundY - h, w: 28 + Math.random() * 24, h });
+  }
+  if (frame % 90 === 35) {
+    coins.push({ x: canvas.width + 20, y: 165 + Math.random() * 80, r: 13, got: false });
+  }
+}
+
+function hit(a, b) {
+  return a.x + 12 < b.x + b.w && a.x + a.w - 12 > b.x && a.y + 8 < b.y + b.h && a.y + a.h - 4 > b.y;
+}
+
+function update() {
+  if (state !== 'playing') return;
+  frame++;
+  speed += 0.0025;
+  score += 0.08;
+
+  dog.vy += dog.gravity;
+  dog.y += dog.vy;
+  if (dog.y >= groundY - dog.h) {
+    dog.y = groundY - dog.h;
+    dog.vy = 0;
+    dog.onGround = true;
+  }
+
+  spawn();
+
+  obstacles.forEach(o => o.x -= speed);
+  coins.forEach(c => c.x -= speed);
+  clouds.forEach(c => {
+    c.x -= 0.45 * c.s;
+    if (c.x < -120) { c.x = canvas.width + 80; c.y = 40 + Math.random() * 95; }
+  });
+
+  obstacles = obstacles.filter(o => o.x > -80);
+  coins = coins.filter(c => c.x > -40 && !c.got);
+
+  for (const o of obstacles) {
+    if (hit(dog, o)) {
+      state = 'gameover';
+      best = Math.max(best, Math.floor(score));
+      localStorage.setItem('nunuBest', best);
+    }
+  }
+  for (const c of coins) {
+    const cx = Math.max(dog.x, Math.min(c.x, dog.x + dog.w));
+    const cy = Math.max(dog.y, Math.min(c.y, dog.y + dog.h));
+    if (Math.hypot(c.x - cx, c.y - cy) < c.r) {
+      c.got = true;
+      score += 12;
+    }
+  }
+}
+
+function drawDog() {
+  const x = dog.x, y = dog.y;
+  ctx.save();
+
+  // ⭐ 這裡是關鍵修改：水平翻轉
+  ctx.translate(x + dog.w/2, 0);
+  ctx.scale(-1, 1);
+  ctx.translate(-(x + dog.w/2), 0);
+
+  const bob = dog.onGround ? Math.sin(frame/7)*2 : 0;
+  ctx.translate(0, bob);
+
+  ctx.fillStyle = '#fffdf3';
+  roundRect(x+18, y+28, 62, 34, 18);
+  ctx.fill();
+
+  ctx.strokeStyle = '#fffdf3'; ctx.lineWidth = 9; ctx.lineCap = 'round';
+  const legSwing = dog.onGround ? Math.sin(frame/6)*6 : 0;
+  line(x+34, y+58, x+30+legSwing, y+72);
+  line(x+57, y+58, x+61-legSwing, y+72);
+
+  ctx.strokeStyle = '#fffdf3'; ctx.lineWidth = 7;
+  line(x+77, y+35, x+103, y+24);
+
+  ctx.fillStyle = '#7a4a2d';
+  ctx.beginPath();
+  ctx.ellipse(x+26, y+24, 24, 22, 0, 0, Math.PI*2);
+  ctx.fill();
+
+  ctx.restore();
+}
+
+function draw() {
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  drawDog();
+}
+
+function loop() { update(); draw(); requestAnimationFrame(loop); }
+loop();
+</script>
+</body>
+</html>
