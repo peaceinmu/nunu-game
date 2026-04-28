@@ -1,0 +1,1243 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+<title>努努大冒險</title>
+
+<style>
+html, body {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background: #6ec6ff;
+  font-family: system-ui, "Noto Sans TC", sans-serif;
+  touch-action: none;
+}
+
+#game {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+  image-rendering: pixelated;
+}
+
+#ui {
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  right: 12px;
+  display: flex;
+  justify-content: space-between;
+  color: white;
+  font-size: 20px;
+  font-weight: 900;
+  text-shadow: 3px 3px 0 #3157a5;
+  pointer-events: none;
+}
+
+#hint {
+  position: fixed;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(255,255,255,.85);
+  color: #7a3b00;
+  padding: 10px 18px;
+  border-radius: 999px;
+  font-weight: 900;
+  pointer-events: none;
+}
+
+#startScreen, #messageScreen {
+  position: fixed;
+  inset: 0;
+  background: linear-gradient(#6ec6ff, #b7f27a);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+}
+
+#messageScreen {
+  display: none;
+  background: rgba(255,255,255,.72);
+}
+
+.startBox, .messageBox {
+  background: rgba(255,255,255,.94);
+  padding: 36px 32px;
+  border-radius: 24px;
+  text-align: center;
+  color: #7a3b00;
+  box-shadow: 0 10px 0 rgba(0,0,0,.18);
+  max-width: 86vw;
+}
+
+.startBox h1, .messageBox h1 {
+  margin: 0 0 12px;
+  font-size: 36px;
+  font-weight: 900;
+}
+
+.startBox p, .messageBox p {
+  margin: 0 0 22px;
+  font-weight: 800;
+  line-height: 1.6;
+}
+
+#startBtn, #nextBtn, #restart {
+  border: none;
+  background: #ffcf33;
+  color: #7a3b00;
+  font-size: 22px;
+  font-weight: 900;
+  padding: 14px 30px;
+  border-radius: 14px;
+  box-shadow: 0 8px 0 #d98900;
+}
+
+#restart {
+  position: fixed;
+  left: 50%;
+  top: 58%;
+  transform: translate(-50%, -50%);
+  display: none;
+  z-index: 12;
+}
+</style>
+</head>
+
+<body>
+<canvas id="game"></canvas>
+
+<div id="ui">
+  <div>關卡：<span id="levelText">1</span></div>
+  <div>芭樂：<span id="score">0</span>/<span id="needItems">25</span></div>
+  <div>生命：<span id="life">3</span></div>
+</div>
+
+<div id="hint">手機點螢幕跳躍｜電腦按空白鍵跳</div>
+
+<div id="startScreen">
+  <div class="startBox">
+    <h1>努努大冒險</h1>
+    <p>
+      點螢幕跳躍，幫努努闖過三個關卡！<br>
+      每關都要跑到終點旗，並吃到足夠芭樂。
+    </p>
+    <button id="startBtn">開始遊戲</button>
+  </div>
+</div>
+
+<div id="messageScreen">
+  <div class="messageBox">
+    <h1 id="messageTitle">闖關成功！</h1>
+    <p id="messageText"></p>
+    <button id="nextBtn">下一關</button>
+  </div>
+</div>
+
+<button id="restart">再玩一次</button>
+
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+const scoreEl = document.getElementById("score");
+const lifeEl = document.getElementById("life");
+const levelTextEl = document.getElementById("levelText");
+const needItemsEl = document.getElementById("needItems");
+
+const startScreen = document.getElementById("startScreen");
+const startBtn = document.getElementById("startBtn");
+const restartBtn = document.getElementById("restart");
+const messageScreen = document.getElementById("messageScreen");
+const messageTitle = document.getElementById("messageTitle");
+const messageText = document.getElementById("messageText");
+const nextBtn = document.getElementById("nextBtn");
+
+let W, H, DPR;
+
+function resize() {
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = window.innerWidth;
+  H = window.innerHeight;
+  canvas.width = W * DPR;
+  canvas.height = H * DPR;
+  canvas.style.width = W + "px";
+  canvas.style.height = H + "px";
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+window.addEventListener("resize", resize);
+resize();
+
+/* =========================
+   音效與背景音樂
+========================= */
+let audioCtx;
+let musicTimer = null;
+let musicStep = 0;
+
+function initAudio() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  if (audioCtx.state === "suspended") audioCtx.resume();
+}
+
+function playTone(freq, duration, type = "square", volume = 0.08) {
+  if (!audioCtx) return;
+
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+
+  osc.type = type;
+  osc.frequency.value = freq;
+
+  gain.gain.setValueAtTime(volume, audioCtx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+
+  osc.connect(gain);
+  gain.connect(audioCtx.destination);
+
+  osc.start();
+  osc.stop(audioCtx.currentTime + duration);
+}
+
+function playJumpSound() {
+  playTone(420, 0.08, "square", 0.075);
+  setTimeout(() => playTone(620, 0.08, "square", 0.06), 55);
+}
+
+function playGuavaSound() {
+  playTone(760, 0.07, "square", 0.08);
+  setTimeout(() => playTone(980, 0.09, "triangle", 0.07), 70);
+}
+
+function playStompSound() {
+  playTone(180, 0.08, "square", 0.08);
+  setTimeout(() => playTone(300, 0.08, "square", 0.06), 70);
+}
+
+function playHurtSound() {
+  playTone(280, 0.12, "sawtooth", 0.08);
+  setTimeout(() => playTone(180, 0.16, "sawtooth", 0.06), 100);
+}
+
+function playWinBark() {
+  playTone(520, 0.12, "triangle", 0.12);
+  setTimeout(() => playTone(760, 0.13, "triangle", 0.12), 150);
+  setTimeout(() => playTone(620, 0.10, "triangle", 0.10), 320);
+  setTimeout(() => playTone(900, 0.16, "triangle", 0.12), 470);
+  setTimeout(() => playTone(760, 0.16, "triangle", 0.1), 680);
+}
+
+function startMusic() {
+  if (!audioCtx || musicTimer) return;
+
+  musicTimer = setInterval(() => {
+    if (!started || gameOver || pausedForMessage) return;
+
+    const level = LEVELS[currentLevelIndex];
+
+    if (level.theme === "night") {
+      const nightNotes = [196, 247, 294, 330, 294, 247, 220, 196];
+      const note = nightNotes[musicStep % nightNotes.length];
+
+      playTone(note, 0.32, "sine", 0.028);
+      if (musicStep % 2 === 0) playTone(note / 2, 0.42, "triangle", 0.018);
+      if (musicStep % 4 === 0) playTone(98, 0.7, "sine", 0.012);
+    } else if (level.theme === "sunset") {
+      const sunsetNotes = [220, 277, 330, 415, 370, 330, 277, 247];
+      const note = sunsetNotes[musicStep % sunsetNotes.length];
+
+      playTone(note, 0.16, "square", 0.028);
+      if (musicStep % 4 === 0) playTone(note / 2, 0.26, "triangle", 0.016);
+    } else {
+      const notes = [
+        262, 330, 392, 523,
+        392, 330, 294, 392,
+        262, 330, 392, 659,
+        587, 523, 392, 330
+      ];
+      const note = notes[musicStep % notes.length];
+
+      playTone(note, 0.12, "square", 0.03);
+      if (musicStep % 4 === 0) playTone(note / 2, 0.16, "triangle", 0.018);
+    }
+
+    musicStep++;
+  }, 180);
+}
+
+function stopMusic() {
+  if (musicTimer) {
+    clearInterval(musicTimer);
+    musicTimer = null;
+  }
+}
+
+/* =========================
+   關卡設定
+========================= */
+const GROUND_H = 86;
+const GRAVITY = 0.75;
+const JUMP_POWER = -15.3;
+
+const LEVELS = [
+  {
+    no: 1,
+    theme: "day",
+    speed: 3.25,
+    goalX: 3200,
+    needItems: 25,
+    totalItems: 42,
+    successText: "恭喜你！第一關闖關成功！",
+    platforms: [
+      [420, 205, 150],
+      [760, 275, 170],
+      [1160, 220, 190],
+      [1600, 305, 160],
+      [2000, 235, 220],
+      [2470, 285, 170],
+      [2830, 215, 210]
+    ],
+    enemies: [
+      [520, -1.2], [780, 1.2], [1040, -1.3], [1300, 1.3],
+      [1560, -1.4], [1820, 1.4], [2080, -1.4], [2340, 1.5],
+      [2600, -1.5], [2860, 1.5], [3060, -1.6]
+    ]
+  },
+  {
+    no: 2,
+    theme: "sunset",
+    speed: 3.75,
+    goalX: 4300,
+    needItems: 36,
+    totalItems: 56,
+    successText: "恭喜你！第二關闖關成功！",
+    platforms: [
+      [360, 210, 130],
+      [690, 300, 140],
+      [1030, 235, 130],
+      [1340, 335, 120],
+      [1710, 255, 145],
+      [2050, 315, 120],
+      [2380, 220, 150],
+      [2760, 340, 125],
+      [3140, 260, 135],
+      [3520, 305, 120],
+      [3880, 230, 160]
+    ],
+    enemies: [
+      [460, -1.4], [680, 1.4], [900, -1.5], [1120, 1.5],
+      [1340, -1.6], [1560, 1.6], [1780, -1.6], [2000, 1.7],
+      [2220, -1.7], [2440, 1.7], [2660, -1.8], [2880, 1.8],
+      [3100, -1.8], [3320, 1.9], [3540, -1.9], [3760, 1.9],
+      [3980, -2.0], [4180, 2.0]
+    ]
+  },
+  {
+    no: 3,
+    theme: "night",
+    speed: 4.25,
+    goalX: 5600,
+    needItems: 50,
+    totalItems: 72,
+    successText: "你好棒！全部闖關成功！",
+    platforms: [
+      [330, 230, 120],
+      [610, 315, 115],
+      [890, 245, 120],
+      [1180, 355, 110],
+      [1510, 270, 120],
+      [1820, 335, 115],
+      [2140, 230, 120],
+      [2470, 360, 110],
+      [2790, 285, 115],
+      [3130, 220, 120],
+      [3480, 350, 110],
+      [3820, 270, 120],
+      [4180, 330, 110],
+      [4540, 240, 120],
+      [4920, 360, 115],
+      [5260, 280, 130]
+    ],
+    enemies: [
+      [420, -1.6], [620, 1.6], [820, -1.7], [1020, 1.7],
+      [1220, -1.8], [1420, 1.8], [1620, -1.8], [1820, 1.9],
+      [2020, -1.9], [2220, 1.9], [2420, -2.0], [2620, 2.0],
+      [2820, -2.0], [3020, 2.1], [3220, -2.1], [3420, 2.1],
+      [3620, -2.2], [3820, 2.2], [4020, -2.2], [4220, 2.3],
+      [4420, -2.3], [4620, 2.3], [4820, -2.4], [5020, 2.4],
+      [5220, -2.4], [5420, 2.5], [5540, -2.5]
+    ]
+  }
+];
+
+/* =========================
+   遊戲狀態
+========================= */
+let currentLevelIndex = 0;
+let started = false;
+let pausedForMessage = false;
+let cameraX = 0;
+let frame = 0;
+let score = 0;
+let life = 3;
+let gameOver = false;
+let goalX = LEVELS[0].goalX;
+
+const keys = { jump: false };
+
+const nunu = {
+  x: 120,
+  y: 0,
+  w: 74,
+  h: 58,
+  vx: LEVELS[0].speed,
+  vy: 0,
+  face: 1,
+  onGround: false,
+  invincible: 0
+};
+
+let platforms = [];
+let guavas = [];
+let enemies = [];
+
+function currentLevel() {
+  return LEVELS[currentLevelIndex];
+}
+
+/* =========================
+   按鈕事件
+========================= */
+startBtn.addEventListener("click", () => {
+  initAudio();
+  resetLevel(0, true);
+  started = true;
+  startScreen.style.display = "none";
+  startMusic();
+});
+
+nextBtn.addEventListener("click", () => {
+  messageScreen.style.display = "none";
+  pausedForMessage = false;
+
+  if (currentLevelIndex >= LEVELS.length - 1) {
+    restartAll();
+  } else {
+    currentLevelIndex++;
+    resetLevel(currentLevelIndex, true);
+    started = true;
+    startMusic();
+  }
+});
+
+restartBtn.addEventListener("click", () => {
+  restartCurrentLevel();
+});
+
+function restartCurrentLevel() {
+  messageScreen.style.display = "none";
+  restartBtn.style.display = "none";
+  pausedForMessage = false;
+  gameOver = false;
+
+  initAudio();
+  resetLevel(currentLevelIndex, true);
+  started = true;
+  startMusic();
+}
+
+function restartAll() {
+  currentLevelIndex = 0;
+  messageScreen.style.display = "none";
+  restartBtn.style.display = "none";
+  pausedForMessage = false;
+  gameOver = false;
+
+  initAudio();
+  resetLevel(0, true);
+  started = true;
+  startMusic();
+}
+
+window.addEventListener("keydown", e => {
+  if (e.key === " " || e.key === "ArrowUp" || e.key.toLowerCase() === "w") {
+    keys.jump = true;
+  }
+});
+
+window.addEventListener("keyup", e => {
+  if (e.key === " " || e.key === "ArrowUp" || e.key.toLowerCase() === "w") {
+    keys.jump = false;
+  }
+});
+
+canvas.addEventListener("pointerdown", e => {
+  e.preventDefault();
+  keys.jump = true;
+});
+
+canvas.addEventListener("pointerup", e => {
+  e.preventDefault();
+  keys.jump = false;
+});
+
+canvas.addEventListener("pointercancel", () => {
+  keys.jump = false;
+});
+
+function updateUI() {
+  const level = currentLevel();
+  levelTextEl.textContent = level.no;
+  scoreEl.textContent = score;
+  lifeEl.textContent = life;
+  needItemsEl.textContent = level.needItems;
+}
+
+function resetLevel(index, resetLife) {
+  const level = LEVELS[index];
+
+  cameraX = 0;
+  frame = 0;
+  score = 0;
+  gameOver = false;
+  pausedForMessage = false;
+  goalX = level.goalX;
+  restartBtn.style.display = "none";
+  keys.jump = false;
+
+  if (resetLife) life = 3;
+
+  nunu.x = 120;
+  nunu.y = H - GROUND_H - nunu.h;
+  nunu.vx = level.speed;
+  nunu.vy = 0;
+  nunu.face = 1;
+  nunu.onGround = false;
+  nunu.invincible = 0;
+
+  platforms = [
+    { x: 0, y: H - GROUND_H, w: level.goalX + 900, h: GROUND_H, type: "ground" }
+  ];
+
+  level.platforms.forEach(p => {
+    platforms.push({
+      x: p[0],
+      y: H - p[1],
+      w: p[2],
+      h: 28,
+      type: "brick"
+    });
+  });
+
+  guavas = [];
+  for (let i = 0; i < level.totalItems; i++) {
+    const spacing = (level.goalX - 420) / level.totalItems;
+    const x = 260 + i * spacing;
+    const wave = Math.sin(i * 0.78) * 58;
+    const alt = i % 5 === 0 ? 95 : 0;
+
+    guavas.push({
+      x,
+      y: H - 155 - wave - alt,
+      r: 17,
+      got: false,
+      spin: i * 0.45
+    });
+  }
+
+  level.platforms.forEach((p, i) => {
+    if (i % 2 === 0 || level.no >= 2) {
+      guavas.push({
+        x: p[0] + p[2] / 2,
+        y: H - p[1] - 45,
+        r: 17,
+        got: false,
+        spin: i * 0.5
+      });
+    }
+  });
+
+  enemies = [];
+  level.enemies.forEach(e => {
+    enemies.push({
+      x: e[0],
+      homeX: e[0],
+      y: H - GROUND_H - 36,
+      w: 42,
+      h: 36,
+      vx: e[1],
+      alive: true,
+      patrolRange: 85
+    });
+  });
+
+  updateUI();
+}
+
+/* =========================
+   遊戲邏輯
+========================= */
+function rectsOverlap(a, b) {
+  return a.x < b.x + b.w &&
+         a.x + a.w > b.x &&
+         a.y < b.y + b.h &&
+         a.y + a.h > b.y;
+}
+
+function update() {
+  frame++;
+
+  if (!started || gameOver || pausedForMessage) return;
+
+  const level = currentLevel();
+
+  nunu.vx = level.speed;
+  nunu.face = 1;
+
+  if (keys.jump && nunu.onGround) {
+    nunu.vy = JUMP_POWER;
+    nunu.onGround = false;
+    playJumpSound();
+  }
+
+  nunu.vy += GRAVITY;
+  nunu.x += nunu.vx;
+  nunu.y += nunu.vy;
+  nunu.onGround = false;
+
+  for (const p of platforms) {
+    if (rectsOverlap(nunu, p)) {
+      if (nunu.vy >= 0 && nunu.y + nunu.h - nunu.vy <= p.y + 8) {
+        nunu.y = p.y - nunu.h;
+        nunu.vy = 0;
+        nunu.onGround = true;
+      }
+    }
+  }
+
+  cameraX = Math.max(0, nunu.x - W * 0.32);
+
+  guavas.forEach(g => {
+    if (!g.got) {
+      const dx = nunu.x + nunu.w / 2 - g.x;
+      const dy = nunu.y + nunu.h / 2 - g.y;
+
+      if (Math.hypot(dx, dy) < g.r + 34) {
+        g.got = true;
+        score++;
+        playGuavaSound();
+        updateUI();
+      }
+    }
+  });
+
+  enemies.forEach(e => {
+    if (!e.alive) return;
+
+    /*
+      敵人修正：
+      舊版敵人會在還沒出現在畫面前，就因為鏡頭判斷而提早往回跑，
+      導致後半段看起來沒有敵人。
+      現在改成每隻敵人在自己的 homeX 附近左右巡邏，
+      因此第二、三關後段也會穩定出現敵人。
+    */
+    if (e.x > cameraX - 140 && e.x < cameraX + W + 180) {
+      e.x += e.vx;
+
+      if (e.x < e.homeX - e.patrolRange) {
+        e.x = e.homeX - e.patrolRange;
+        e.vx = Math.abs(e.vx);
+      }
+
+      if (e.x > e.homeX + e.patrolRange) {
+        e.x = e.homeX + e.patrolRange;
+        e.vx = -Math.abs(e.vx);
+      }
+    }
+
+    if (rectsOverlap(nunu, e)) {
+      if (nunu.vy > 3 && nunu.y + nunu.h - nunu.vy < e.y + 8) {
+        e.alive = false;
+        nunu.vy = -10;
+        score += 2;
+        playStompSound();
+        updateUI();
+      } else if (nunu.invincible <= 0) {
+        life--;
+        nunu.invincible = 90;
+        nunu.vy = -8;
+        playHurtSound();
+        updateUI();
+
+        if (life <= 0) {
+          failCurrentLevel();
+        }
+      }
+    }
+  });
+
+  if (nunu.invincible > 0) nunu.invincible--;
+
+  if (nunu.y > H + 200) {
+    life--;
+    playHurtSound();
+    updateUI();
+
+    nunu.x = Math.max(120, cameraX + 120);
+    nunu.y = H - GROUND_H - nunu.h - 80;
+    nunu.vy = 0;
+
+    if (life <= 0) {
+      failCurrentLevel();
+    }
+  }
+
+  if (nunu.x > goalX) {
+    if (score >= level.needItems && life >= 1) {
+      levelClear();
+    } else {
+      failCurrentLevel();
+    }
+  }
+}
+
+function failCurrentLevel() {
+  gameOver = true;
+  stopMusic();
+  restartBtn.style.display = "block";
+}
+
+function levelClear() {
+  const level = currentLevel();
+
+  pausedForMessage = true;
+  gameOver = true;
+  stopMusic();
+  playWinBark();
+
+  messageTitle.textContent = level.successText;
+
+  if (currentLevelIndex >= LEVELS.length - 1) {
+    messageText.innerHTML = `你完成了全部三關！<br>最後芭樂：${score} 顆｜生命：${life}`;
+    nextBtn.textContent = "重新開始";
+  } else {
+    messageText.innerHTML = `芭樂：${score} 顆｜生命：${life}<br>準備進入第 ${level.no + 1} 關！`;
+    nextBtn.textContent = "下一關";
+  }
+
+  messageScreen.style.display = "flex";
+}
+
+/* =========================
+   畫面繪製
+========================= */
+function drawBackground() {
+  const level = currentLevel();
+
+  if (level.theme === "night") {
+    const g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, "#07133d");
+    g.addColorStop(0.55, "#16215f");
+    g.addColorStop(1, "#24336f");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+
+    drawStars();
+
+    ctx.fillStyle = "#ffeaa8";
+    ctx.beginPath();
+    ctx.arc(W - 90, 85, 36, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = "#07133d";
+    ctx.beginPath();
+    ctx.arc(W - 75, 72, 35, 0, Math.PI * 2);
+    ctx.fill();
+
+    for (let i = 0; i < 8; i++) {
+      const x = (i * 420 - cameraX * 0.25) % (W + 520) - 180;
+      const y = 70 + (i % 3) * 52;
+      drawCloud(x, y, 1 + (i % 2) * 0.25, "rgba(185,205,255,.34)");
+    }
+
+    ctx.fillStyle = "#102d3e";
+    for (let i = 0; i < 8; i++) {
+      const x = i * 400 - cameraX * 0.16;
+      ctx.beginPath();
+      ctx.moveTo(x - 100, H - GROUND_H);
+      ctx.quadraticCurveTo(x + 120, H - 330, x + 330, H - GROUND_H);
+      ctx.fill();
+    }
+
+    drawForestSilhouette();
+    ctx.fillStyle = "#204d38";
+    ctx.fillRect(0, H - GROUND_H - 28, W, 28);
+
+  } else if (level.theme === "sunset") {
+    const g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, "#ff8a5c");
+    g.addColorStop(0.5, "#ffcf75");
+    g.addColorStop(1, "#7ad36b");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.fillStyle = "#ffdf6e";
+    ctx.beginPath();
+    ctx.arc(W - 115, 135, 55, 0, Math.PI * 2);
+    ctx.fill();
+
+    for (let i = 0; i < 8; i++) {
+      const x = (i * 440 - cameraX * 0.25) % (W + 500) - 160;
+      const y = 55 + (i % 3) * 45;
+      drawCloud(x, y, 1 + (i % 2) * 0.25, "rgba(255,245,220,.86)");
+    }
+
+    ctx.fillStyle = "#d46b5d";
+    for (let i = 0; i < 7; i++) {
+      const x = i * 420 - cameraX * 0.18;
+      ctx.beginPath();
+      ctx.moveTo(x - 80, H - GROUND_H);
+      ctx.quadraticCurveTo(x + 120, H - 320, x + 320, H - GROUND_H);
+      ctx.fill();
+    }
+
+    ctx.fillStyle = "#6bc95f";
+    ctx.fillRect(0, H - GROUND_H - 28, W, 28);
+
+  } else {
+    ctx.fillStyle = "#6ec6ff";
+    ctx.fillRect(0, 0, W, H);
+
+    for (let i = 0; i < 8; i++) {
+      const x = (i * 440 - cameraX * 0.25) % (W + 500) - 160;
+      const y = 55 + (i % 3) * 45;
+      drawCloud(x, y, 1 + (i % 2) * 0.25, "#fff");
+    }
+
+    ctx.fillStyle = "#44b95d";
+    for (let i = 0; i < 7; i++) {
+      const x = i * 420 - cameraX * 0.18;
+      ctx.beginPath();
+      ctx.moveTo(x - 80, H - GROUND_H);
+      ctx.quadraticCurveTo(x + 120, H - 320, x + 320, H - GROUND_H);
+      ctx.fill();
+    }
+
+    ctx.fillStyle = "#62d85f";
+    ctx.fillRect(0, H - GROUND_H - 28, W, 28);
+  }
+}
+
+function drawStars() {
+  ctx.fillStyle = "rgba(255,255,255,.85)";
+  for (let i = 0; i < 95; i++) {
+    const x = (i * 73 - cameraX * 0.08) % (W + 100);
+    const y = 20 + (i * 47) % Math.floor(H * 0.55);
+    const s = i % 7 === 0 ? 2 : 1;
+    ctx.fillRect(x, y, s, s);
+  }
+}
+
+function drawForestSilhouette() {
+  ctx.fillStyle = "#0d2a2d";
+  for (let i = 0; i < 22; i++) {
+    const x = (i * 90 - cameraX * 0.22) % (W + 180) - 90;
+    const base = H - GROUND_H - 28;
+    const h = 80 + (i % 5) * 22;
+
+    ctx.beginPath();
+    ctx.moveTo(x, base);
+    ctx.lineTo(x + 28, base - h);
+    ctx.lineTo(x + 56, base);
+    ctx.fill();
+
+    ctx.fillRect(x + 24, base - 12, 8, 22);
+  }
+}
+
+function drawCloud(x, y, s, color) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(s, s);
+
+  ctx.fillStyle = color;
+  ctx.fillRect(0, 20, 88, 28);
+  ctx.beginPath();
+  ctx.arc(18, 20, 18, 0, Math.PI * 2);
+  ctx.arc(44, 8, 24, 0, Math.PI * 2);
+  ctx.arc(72, 20, 18, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+}
+
+function drawPlatforms() {
+  const level = currentLevel();
+
+  for (const p of platforms) {
+    const x = Math.floor(p.x - cameraX);
+    if (x + p.w < -80 || x > W + 80) continue;
+
+    if (p.type === "ground") {
+      const tile = 48;
+
+      for (let tx = Math.floor((cameraX - 60) / tile) * tile; tx < cameraX + W + tile; tx += tile) {
+        const sx = Math.floor(tx - cameraX);
+
+        if (level.theme === "night") {
+          ctx.fillStyle = "#4a3c68";
+          ctx.fillRect(sx, p.y, tile, tile);
+          ctx.fillStyle = "#5d4d84";
+          ctx.fillRect(sx + 5, p.y + 5, tile - 10, tile - 10);
+          ctx.fillStyle = "rgba(0,0,0,.28)";
+          ctx.fillRect(sx, p.y + tile - 7, tile, 7);
+        } else if (level.theme === "sunset") {
+          ctx.fillStyle = "#a85a30";
+          ctx.fillRect(sx, p.y, tile, tile);
+          ctx.fillStyle = "#dc7c3d";
+          ctx.fillRect(sx + 5, p.y + 5, tile - 10, tile - 10);
+          ctx.fillStyle = "rgba(80,35,10,.25)";
+          ctx.fillRect(sx, p.y + tile - 7, tile, 7);
+        } else {
+          ctx.fillStyle = "#b7652d";
+          ctx.fillRect(sx, p.y, tile, tile);
+          ctx.fillStyle = "#e58a3d";
+          ctx.fillRect(sx + 5, p.y + 5, tile - 10, tile - 10);
+          ctx.fillStyle = "rgba(80,35,10,.25)";
+          ctx.fillRect(sx, p.y + tile - 7, tile, 7);
+        }
+      }
+    } else {
+      const tile = 38;
+
+      for (let tx = x; tx < x + p.w; tx += tile) {
+        if (level.theme === "night") {
+          ctx.fillStyle = "#56437d";
+          ctx.fillRect(tx, p.y, tile - 2, p.h);
+          ctx.fillStyle = "#7a66a6";
+          ctx.fillRect(tx + 5, p.y + 5, tile - 12, 7);
+        } else if (level.theme === "sunset") {
+          ctx.fillStyle = "#b85c38";
+          ctx.fillRect(tx, p.y, tile - 2, p.h);
+          ctx.fillStyle = "#ff9b57";
+          ctx.fillRect(tx + 5, p.y + 5, tile - 12, 7);
+        } else {
+          ctx.fillStyle = "#d9712c";
+          ctx.fillRect(tx, p.y, tile - 2, p.h);
+          ctx.fillStyle = "#ffb347";
+          ctx.fillRect(tx + 5, p.y + 5, tile - 12, 7);
+        }
+
+        ctx.fillStyle = "rgba(0,0,0,.18)";
+        ctx.fillRect(tx, p.y + p.h - 6, tile - 2, 6);
+      }
+    }
+  }
+}
+
+function drawGuavas() {
+  guavas.forEach(g => {
+    if (g.got) return;
+
+    const x = g.x - cameraX;
+    if (x < -60 || x > W + 60) return;
+
+    ctx.save();
+    ctx.translate(x, g.y);
+    ctx.rotate(Math.sin(frame * 0.08 + g.spin) * 0.12);
+
+    ctx.fillStyle = "rgba(255,220,120,.32)";
+    ctx.beginPath();
+    ctx.ellipse(0, 15, 20, 5, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = "#8fd35b";
+    ctx.beginPath();
+    ctx.ellipse(0, 1, g.r * 0.92, g.r * 1.05, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = "#a7e66e";
+    ctx.beginPath();
+    ctx.ellipse(-4, -2, g.r * 0.55, g.r * 0.72, -0.35, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = "#5b9f3a";
+    ctx.beginPath();
+    ctx.ellipse(2, -g.r + 2, 4, 3, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = "#4f7f2a";
+    ctx.fillRect(1, -g.r - 5, 3, 7);
+
+    ctx.fillStyle = "#5aa832";
+    ctx.beginPath();
+    ctx.ellipse(8, -g.r - 5, 8, 4, -0.35, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = "rgba(255,255,255,.38)";
+    ctx.beginPath();
+    ctx.ellipse(-6, -7, 5, 8, -0.4, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+  });
+}
+
+function drawEnemies() {
+  enemies.forEach(e => {
+    if (!e.alive) return;
+
+    const x = e.x - cameraX;
+    if (x < -80 || x > W + 80) return;
+
+    ctx.save();
+    ctx.translate(x + e.w / 2, e.y + e.h / 2);
+
+    ctx.fillStyle = currentLevel().theme === "night" ? "#5e4b8a" : "#8a5a2b";
+    ctx.beginPath();
+    ctx.ellipse(0, 4, 23, 20, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = currentLevel().theme === "night" ? "#382b58" : "#6b3b1f";
+    ctx.beginPath();
+    ctx.ellipse(0, 18, 26, 8, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = "#fff";
+    ctx.beginPath();
+    ctx.arc(-8, -4, 5, 0, Math.PI * 2);
+    ctx.arc(8, -4, 5, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = "#111";
+    ctx.beginPath();
+    ctx.arc(-7, -3, 2, 0, Math.PI * 2);
+    ctx.arc(9, -3, 2, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+  });
+}
+
+function drawGoal() {
+  const x = goalX - cameraX;
+  if (x < -100 || x > W + 100) return;
+
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(x, H - GROUND_H - 190, 10, 190);
+
+  ctx.fillStyle = currentLevel().theme === "night" ? "#b9a7ff" : "#ff4b5c";
+  ctx.beginPath();
+  ctx.moveTo(x + 10, H - GROUND_H - 190);
+  ctx.lineTo(x + 88, H - GROUND_H - 165);
+  ctx.lineTo(x + 10, H - GROUND_H - 140);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle = "#ffd83d";
+  ctx.font = "900 20px system-ui";
+  ctx.fillText("GO!", x + 24, H - GROUND_H - 158);
+}
+
+function drawNunu() {
+  if (nunu.invincible > 0 && frame % 8 < 4) return;
+
+  const x = nunu.x - cameraX;
+  const y = nunu.y;
+  const bob = nunu.onGround ? Math.sin(frame * 0.25) * 2 : 0;
+
+  ctx.save();
+  ctx.translate(x + nunu.w / 2, y + nunu.h / 2 + bob);
+  ctx.scale(nunu.face, 1);
+
+  ctx.fillStyle = "rgba(0,0,0,.18)";
+  ctx.beginPath();
+  ctx.ellipse(-2, 36, 42, 10, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = "#fffdf4";
+  ctx.lineWidth = 8;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(-38, -7);
+  ctx.quadraticCurveTo(-56, -28, -69, -10);
+  ctx.stroke();
+
+  ctx.fillStyle = "#fffdf4";
+  ctx.beginPath();
+  ctx.ellipse(-10, 8, 38, 25, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "#7a5238";
+  ctx.beginPath();
+  ctx.arc(-26, 3, 4, 0, Math.PI * 2);
+  ctx.arc(-3, 22, 3, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = "#fffdf4";
+  ctx.lineWidth = 7;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+
+  if (nunu.onGround) {
+    ctx.moveTo(-28, 28); ctx.lineTo(-34, 42);
+    ctx.moveTo(-4, 30); ctx.lineTo(0, 44);
+    ctx.moveTo(16, 27); ctx.lineTo(23, 40);
+  } else {
+    ctx.moveTo(-24, 26); ctx.lineTo(-34, 32);
+    ctx.moveTo(4, 28); ctx.lineTo(14, 34);
+    ctx.moveTo(20, 23); ctx.lineTo(30, 27);
+  }
+
+  ctx.stroke();
+
+  ctx.fillStyle = "#ff4b5c";
+  ctx.beginPath();
+  ctx.ellipse(17, 18, 16, 6, -0.18, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "#2ec4ff";
+  ctx.beginPath();
+  ctx.ellipse(11, 18, 5, 5, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "#ffd83d";
+  ctx.beginPath();
+  ctx.arc(18, 26, 5, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.save();
+  ctx.translate(34, -6);
+
+  ctx.fillStyle = "#7b5136";
+
+  ctx.beginPath();
+  ctx.moveTo(-8, -18);
+  ctx.quadraticCurveTo(-18, -48, -4, -55);
+  ctx.quadraticCurveTo(8, -40, 6, -19);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.moveTo(19, -18);
+  ctx.quadraticCurveTo(21, -50, 36, -52);
+  ctx.quadraticCurveTo(43, -34, 33, -14);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle = "rgba(255,197,176,.62)";
+
+  ctx.beginPath();
+  ctx.moveTo(-4, -28);
+  ctx.quadraticCurveTo(-10, -43, -4, -48);
+  ctx.quadraticCurveTo(3, -38, 2, -27);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.moveTo(28, -26);
+  ctx.quadraticCurveTo(29, -42, 35, -45);
+  ctx.quadraticCurveTo(38, -34, 31, -24);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle = "#7b5136";
+  ctx.beginPath();
+  ctx.ellipse(12, 0, 30, 27, 0.05, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "#fffdf4";
+  ctx.beginPath();
+  ctx.moveTo(7, -25);
+  ctx.quadraticCurveTo(20, -10, 19, 5);
+  ctx.quadraticCurveTo(17, 22, 4, 25);
+  ctx.quadraticCurveTo(-5, 7, 0, -11);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.ellipse(28, 10, 16, 11, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = "#3f291b";
+  ctx.lineWidth = 3;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(-6, -12); ctx.lineTo(8, -7);
+  ctx.moveTo(-7, 0); ctx.lineTo(7, 3);
+  ctx.moveTo(33, -13); ctx.lineTo(19, -8);
+  ctx.moveTo(36, -2); ctx.lineTo(24, 1);
+  ctx.stroke();
+
+  ctx.fillStyle = "#111";
+  ctx.beginPath();
+  ctx.arc(7, -8, 3.8, 0, Math.PI * 2);
+  ctx.arc(29, -8, 3.8, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "#fff";
+  ctx.beginPath();
+  ctx.arc(8, -9, 1.4, 0, Math.PI * 2);
+  ctx.arc(30, -9, 1.4, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "#211711";
+  ctx.beginPath();
+  ctx.ellipse(42, 6, 5, 4, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = "#211711";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(38, 13);
+  ctx.quadraticCurveTo(31, 20, 24, 14);
+  ctx.stroke();
+
+  ctx.restore();
+  ctx.restore();
+}
+
+function drawGameOver() {
+  if (!gameOver || pausedForMessage) return;
+
+  ctx.fillStyle = "rgba(255,255,255,.78)";
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.fillStyle = "#7a3b00";
+  ctx.textAlign = "center";
+  ctx.font = "900 32px system-ui";
+
+  if (nunu.x > goalX && score < currentLevel().needItems) {
+    ctx.fillText("芭樂還不夠喔！", W / 2, H / 2 - 75);
+    ctx.font = "900 22px system-ui";
+    ctx.fillText(`第 ${currentLevel().no} 關需要 ${currentLevel().needItems} 顆，目前 ${score} 顆`, W / 2, H / 2 - 35);
+  } else {
+    ctx.fillText(`第 ${currentLevel().no} 關失敗，努努再試一次！`, W / 2, H / 2 - 60);
+    ctx.font = "900 22px system-ui";
+    ctx.fillText(`這次拿到 ${score} 顆芭樂`, W / 2, H / 2 - 20);
+  }
+}
+
+function loop() {
+  update();
+  drawBackground();
+  drawPlatforms();
+  drawGuavas();
+  drawEnemies();
+  drawGoal();
+  drawNunu();
+  drawGameOver();
+  requestAnimationFrame(loop);
+}
+
+resetLevel(0, true);
+loop();
+</script>
+</body>
+</html>
