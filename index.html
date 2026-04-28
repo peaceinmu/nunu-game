@@ -49,7 +49,7 @@ html, body {
   pointer-events: none;
 }
 
-#startScreen {
+#startScreen, #messageScreen {
   position: fixed;
   inset: 0;
   background: linear-gradient(#6ec6ff, #b7f27a);
@@ -59,28 +59,34 @@ html, body {
   z-index: 10;
 }
 
-.startBox {
-  background: rgba(255,255,255,.92);
+#messageScreen {
+  display: none;
+  background: rgba(255,255,255,.72);
+}
+
+.startBox, .messageBox {
+  background: rgba(255,255,255,.94);
   padding: 36px 32px;
   border-radius: 24px;
   text-align: center;
   color: #7a3b00;
   box-shadow: 0 10px 0 rgba(0,0,0,.18);
+  max-width: 86vw;
 }
 
-.startBox h1 {
+.startBox h1, .messageBox h1 {
   margin: 0 0 12px;
-  font-size: 38px;
+  font-size: 36px;
   font-weight: 900;
 }
 
-.startBox p {
+.startBox p, .messageBox p {
   margin: 0 0 22px;
   font-weight: 800;
+  line-height: 1.6;
 }
 
-#startBtn,
-#restart {
+#startBtn, #nextBtn, #restart {
   border: none;
   background: #ffcf33;
   color: #7a3b00;
@@ -97,6 +103,7 @@ html, body {
   top: 58%;
   transform: translate(-50%, -50%);
   display: none;
+  z-index: 12;
 }
 </style>
 </head>
@@ -105,7 +112,8 @@ html, body {
 <canvas id="game"></canvas>
 
 <div id="ui">
-  <div>金幣：<span id="score">0</span></div>
+  <div>關卡：<span id="levelText">1</span></div>
+  <div>金幣：<span id="score">0</span>/<span id="needCoins">25</span></div>
   <div>生命：<span id="life">3</span></div>
 </div>
 
@@ -114,8 +122,19 @@ html, body {
 <div id="startScreen">
   <div class="startBox">
     <h1>努努大冒險</h1>
-    <p>點螢幕跳躍，幫努努闖關！</p>
+    <p>
+      點螢幕跳躍，幫努努闖過三個關卡！<br>
+      每關都要跑到終點旗，並吃到足夠金幣。
+    </p>
     <button id="startBtn">開始遊戲</button>
+  </div>
+</div>
+
+<div id="messageScreen">
+  <div class="messageBox">
+    <h1 id="messageTitle">闖關成功！</h1>
+    <p id="messageText"></p>
+    <button id="nextBtn">下一關</button>
   </div>
 </div>
 
@@ -124,11 +143,19 @@ html, body {
 <script>
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
+
 const scoreEl = document.getElementById("score");
 const lifeEl = document.getElementById("life");
+const levelTextEl = document.getElementById("levelText");
+const needCoinsEl = document.getElementById("needCoins");
+
 const startScreen = document.getElementById("startScreen");
 const startBtn = document.getElementById("startBtn");
 const restartBtn = document.getElementById("restart");
+const messageScreen = document.getElementById("messageScreen");
+const messageTitle = document.getElementById("messageTitle");
+const messageText = document.getElementById("messageText");
+const nextBtn = document.getElementById("nextBtn");
 
 let W, H, DPR;
 
@@ -151,16 +178,12 @@ resize();
 let audioCtx;
 let musicTimer = null;
 let musicStep = 0;
-let winSoundPlayed = false;
 
 function initAudio() {
   if (!audioCtx) {
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   }
-
-  if (audioCtx.state === "suspended") {
-    audioCtx.resume();
-  }
+  if (audioCtx.state === "suspended") audioCtx.resume();
 }
 
 function playTone(freq, duration, type = "square", volume = 0.08) {
@@ -213,21 +236,35 @@ function playWinBark() {
 function startMusic() {
   if (!audioCtx || musicTimer) return;
 
-  const notes = [
-    262, 330, 392, 523,
-    392, 330, 294, 392,
-    262, 330, 392, 659,
-    587, 523, 392, 330
-  ];
-
   musicTimer = setInterval(() => {
-    if (!started || gameOver) return;
+    if (!started || gameOver || pausedForMessage) return;
 
-    const note = notes[musicStep % notes.length];
-    playTone(note, 0.12, "square", 0.03);
+    const level = LEVELS[currentLevelIndex];
 
-    if (musicStep % 4 === 0) {
-      playTone(note / 2, 0.16, "triangle", 0.018);
+    if (level.theme === "night") {
+      const nightNotes = [196, 247, 294, 330, 294, 247, 220, 196];
+      const note = nightNotes[musicStep % nightNotes.length];
+
+      playTone(note, 0.32, "sine", 0.028);
+      if (musicStep % 2 === 0) playTone(note / 2, 0.42, "triangle", 0.018);
+      if (musicStep % 4 === 0) playTone(98, 0.7, "sine", 0.012);
+    } else if (level.theme === "sunset") {
+      const sunsetNotes = [220, 277, 330, 415, 370, 330, 277, 247];
+      const note = sunsetNotes[musicStep % sunsetNotes.length];
+
+      playTone(note, 0.16, "square", 0.028);
+      if (musicStep % 4 === 0) playTone(note / 2, 0.26, "triangle", 0.016);
+    } else {
+      const notes = [
+        262, 330, 392, 523,
+        392, 330, 294, 392,
+        262, 330, 392, 659,
+        587, 523, 392, 330
+      ];
+      const note = notes[musicStep % notes.length];
+
+      playTone(note, 0.12, "square", 0.03);
+      if (musicStep % 4 === 0) playTone(note / 2, 0.16, "triangle", 0.018);
     }
 
     musicStep++;
@@ -242,20 +279,106 @@ function stopMusic() {
 }
 
 /* =========================
-   遊戲設定
+   關卡設定
 ========================= */
 const GROUND_H = 86;
 const GRAVITY = 0.75;
 const JUMP_POWER = -15.3;
-const AUTO_SPEED = 3.25;
 
+const LEVELS = [
+  {
+    no: 1,
+    theme: "day",
+    speed: 3.25,
+    goalX: 3200,
+    needCoins: 25,
+    totalCoins: 42,
+    successText: "恭喜你！第一關闖關成功！",
+    platforms: [
+      [420, 205, 150],
+      [760, 275, 170],
+      [1160, 220, 190],
+      [1600, 305, 160],
+      [2000, 235, 220],
+      [2470, 285, 170],
+      [2830, 215, 210]
+    ],
+    enemies: [
+      [620, -1.2], [1030, 1.1], [1480, -1.3], [2300, 1.4], [2920, -1.5]
+    ]
+  },
+  {
+    no: 2,
+    theme: "sunset",
+    speed: 3.75,
+    goalX: 4300,
+    needCoins: 36,
+    totalCoins: 56,
+    successText: "恭喜你！第二關闖關成功！",
+    platforms: [
+      [360, 210, 130],
+      [690, 300, 140],
+      [1030, 235, 130],
+      [1340, 335, 120],
+      [1710, 255, 145],
+      [2050, 315, 120],
+      [2380, 220, 150],
+      [2760, 340, 125],
+      [3140, 260, 135],
+      [3520, 305, 120],
+      [3880, 230, 160]
+    ],
+    enemies: [
+      [540, -1.4], [900, 1.3], [1260, -1.5], [1660, 1.5],
+      [2180, -1.6], [2630, 1.5], [3220, -1.7], [3750, 1.7]
+    ]
+  },
+  {
+    no: 3,
+    theme: "night",
+    speed: 4.25,
+    goalX: 5600,
+    needCoins: 50,
+    totalCoins: 72,
+    successText: "你好棒！全部闖關成功！",
+    platforms: [
+      [330, 230, 120],
+      [610, 315, 115],
+      [890, 245, 120],
+      [1180, 355, 110],
+      [1510, 270, 120],
+      [1820, 335, 115],
+      [2140, 230, 120],
+      [2470, 360, 110],
+      [2790, 285, 115],
+      [3130, 220, 120],
+      [3480, 350, 110],
+      [3820, 270, 120],
+      [4180, 330, 110],
+      [4540, 240, 120],
+      [4920, 360, 115],
+      [5260, 280, 130]
+    ],
+    enemies: [
+      [520, -1.6], [790, 1.6], [1110, -1.7], [1420, 1.7],
+      [1770, -1.8], [2070, 1.8], [2390, -1.9], [2890, 1.9],
+      [3370, -2.0], [3860, 2.0], [4480, -2.1], [5140, 2.1]
+    ]
+  }
+];
+
+/* =========================
+   遊戲狀態
+========================= */
+let currentLevelIndex = 0;
 let started = false;
+let pausedForMessage = false;
 let cameraX = 0;
 let frame = 0;
 let score = 0;
 let life = 3;
 let gameOver = false;
-let goalX = 3200;
+let goalX = LEVELS[0].goalX;
 
 const keys = { jump: false };
 
@@ -264,7 +387,7 @@ const nunu = {
   y: 0,
   w: 74,
   h: 58,
-  vx: AUTO_SPEED,
+  vx: LEVELS[0].speed,
   vy: 0,
   face: 1,
   onGround: false,
@@ -275,19 +398,68 @@ let platforms = [];
 let coins = [];
 let enemies = [];
 
+function currentLevel() {
+  return LEVELS[currentLevelIndex];
+}
+
+/* =========================
+   按鈕事件
+========================= */
 startBtn.addEventListener("click", () => {
   initAudio();
-  startMusic();
+  resetLevel(0, true);
   started = true;
   startScreen.style.display = "none";
+  startMusic();
 });
 
-restartBtn.addEventListener("click", () => {
-  reset();
-  initAudio();
-  startMusic();
-  started = true;
+nextBtn.addEventListener("click", () => {
+  messageScreen.style.display = "none";
+  pausedForMessage = false;
+
+  if (currentLevelIndex >= LEVELS.length - 1) {
+    restartAll();
+  } else {
+    currentLevelIndex++;
+    resetLevel(currentLevelIndex, true);
+    started = true;
+    startMusic();
+  }
 });
+
+/*
+  重要修正：
+  失敗後按「再玩一次」時，
+  不會回到第一關，而是重玩目前所在的關卡。
+*/
+restartBtn.addEventListener("click", () => {
+  restartCurrentLevel();
+});
+
+function restartCurrentLevel() {
+  messageScreen.style.display = "none";
+  restartBtn.style.display = "none";
+  pausedForMessage = false;
+  gameOver = false;
+
+  initAudio();
+  resetLevel(currentLevelIndex, true);
+  started = true;
+  startMusic();
+}
+
+function restartAll() {
+  currentLevelIndex = 0;
+  messageScreen.style.display = "none";
+  restartBtn.style.display = "none";
+  pausedForMessage = false;
+  gameOver = false;
+
+  initAudio();
+  resetLevel(0, true);
+  started = true;
+  startMusic();
+}
 
 window.addEventListener("keydown", e => {
   if (e.key === " " || e.key === "ArrowUp" || e.key.toLowerCase() === "w") {
@@ -316,66 +488,93 @@ canvas.addEventListener("pointercancel", () => {
 });
 
 function updateUI() {
+  const level = currentLevel();
+  levelTextEl.textContent = level.no;
   scoreEl.textContent = score;
   lifeEl.textContent = life;
+  needCoinsEl.textContent = level.needCoins;
 }
 
-function reset() {
+function resetLevel(index, resetLife) {
+  const level = LEVELS[index];
+
   cameraX = 0;
   frame = 0;
   score = 0;
-  life = 3;
   gameOver = false;
-  winSoundPlayed = false;
+  pausedForMessage = false;
+  goalX = level.goalX;
   restartBtn.style.display = "none";
+  keys.jump = false;
+
+  if (resetLife) life = 3;
 
   nunu.x = 120;
   nunu.y = H - GROUND_H - nunu.h;
-  nunu.vx = AUTO_SPEED;
+  nunu.vx = level.speed;
   nunu.vy = 0;
   nunu.face = 1;
   nunu.onGround = false;
   nunu.invincible = 0;
 
   platforms = [
-    { x: 0, y: H - GROUND_H, w: goalX + 700, h: GROUND_H, type: "ground" },
-    { x: 420, y: H - 205, w: 150, h: 28, type: "brick" },
-    { x: 760, y: H - 275, w: 170, h: 28, type: "brick" },
-    { x: 1160, y: H - 220, w: 190, h: 28, type: "brick" },
-    { x: 1600, y: H - 305, w: 160, h: 28, type: "brick" },
-    { x: 2000, y: H - 235, w: 220, h: 28, type: "brick" },
-    { x: 2470, y: H - 285, w: 170, h: 28, type: "brick" },
-    { x: 2830, y: H - 215, w: 210, h: 28, type: "brick" }
+    { x: 0, y: H - GROUND_H, w: level.goalX + 900, h: GROUND_H, type: "ground" }
   ];
 
+  level.platforms.forEach(p => {
+    platforms.push({
+      x: p[0],
+      y: H - p[1],
+      w: p[2],
+      h: 28,
+      type: "brick"
+    });
+  });
+
   coins = [];
-  for (let i = 0; i < 34; i++) {
+  for (let i = 0; i < level.totalCoins; i++) {
+    const spacing = (level.goalX - 420) / level.totalCoins;
+    const x = 260 + i * spacing;
+    const wave = Math.sin(i * 0.78) * 58;
+    const alt = i % 5 === 0 ? 95 : 0;
+
     coins.push({
-      x: 260 + i * 88,
-      y: H - 155 - Math.sin(i * 0.8) * 60,
+      x,
+      y: H - 155 - wave - alt,
       r: 15,
       got: false
     });
   }
 
-  coins.push(
-    { x: 475, y: H - 250, r: 15, got: false },
-    { x: 820, y: H - 320, r: 15, got: false },
-    { x: 1670, y: H - 355, r: 15, got: false },
-    { x: 2550, y: H - 335, r: 15, got: false }
-  );
+  level.platforms.forEach((p, i) => {
+    if (i % 2 === 0 || level.no >= 2) {
+      coins.push({
+        x: p[0] + p[2] / 2,
+        y: H - p[1] - 45,
+        r: 15,
+        got: false
+      });
+    }
+  });
 
-  enemies = [
-    { x: 620, y: H - GROUND_H - 36, w: 42, h: 36, vx: -1.2, alive: true },
-    { x: 1030, y: H - GROUND_H - 36, w: 42, h: 36, vx: 1.1, alive: true },
-    { x: 1480, y: H - GROUND_H - 36, w: 42, h: 36, vx: -1.3, alive: true },
-    { x: 2300, y: H - GROUND_H - 36, w: 42, h: 36, vx: 1.4, alive: true },
-    { x: 2920, y: H - GROUND_H - 36, w: 42, h: 36, vx: -1.5, alive: true }
-  ];
+  enemies = [];
+  level.enemies.forEach(e => {
+    enemies.push({
+      x: e[0],
+      y: H - GROUND_H - 36,
+      w: 42,
+      h: 36,
+      vx: e[1],
+      alive: true
+    });
+  });
 
   updateUI();
 }
 
+/* =========================
+   遊戲邏輯
+========================= */
 function rectsOverlap(a, b) {
   return a.x < b.x + b.w &&
          a.x + a.w > b.x &&
@@ -386,9 +585,11 @@ function rectsOverlap(a, b) {
 function update() {
   frame++;
 
-  if (!started || gameOver) return;
+  if (!started || gameOver || pausedForMessage) return;
 
-  nunu.vx = AUTO_SPEED;
+  const level = currentLevel();
+
+  nunu.vx = level.speed;
   nunu.face = 1;
 
   if (keys.jump && nunu.onGround) {
@@ -418,6 +619,7 @@ function update() {
     if (!c.got) {
       const dx = nunu.x + nunu.w / 2 - c.x;
       const dy = nunu.y + nunu.h / 2 - c.y;
+
       if (Math.hypot(dx, dy) < c.r + 34) {
         c.got = true;
         score++;
@@ -450,9 +652,7 @@ function update() {
         updateUI();
 
         if (life <= 0) {
-          gameOver = true;
-          stopMusic();
-          restartBtn.style.display = "block";
+          failCurrentLevel();
         }
       }
     }
@@ -470,54 +670,179 @@ function update() {
     nunu.vy = 0;
 
     if (life <= 0) {
-      gameOver = true;
-      stopMusic();
-      restartBtn.style.display = "block";
+      failCurrentLevel();
     }
   }
 
   if (nunu.x > goalX) {
-    gameOver = true;
-    stopMusic();
+    if (score >= level.needCoins && life >= 1) {
+      levelClear();
+    } else {
+      failCurrentLevel();
+    }
+  }
+}
 
-    if (!winSoundPlayed) {
-      winSoundPlayed = true;
-      playWinBark();
+function failCurrentLevel() {
+  gameOver = true;
+  stopMusic();
+  restartBtn.style.display = "block";
+}
+
+function levelClear() {
+  const level = currentLevel();
+
+  pausedForMessage = true;
+  gameOver = true;
+  stopMusic();
+  playWinBark();
+
+  messageTitle.textContent = level.successText;
+
+  if (currentLevelIndex >= LEVELS.length - 1) {
+    messageText.innerHTML = `你完成了全部三關！<br>最後金幣：${score} 枚｜生命：${life}`;
+    nextBtn.textContent = "重新開始";
+  } else {
+    messageText.innerHTML = `金幣：${score} 枚｜生命：${life}<br>準備進入第 ${level.no + 1} 關！`;
+    nextBtn.textContent = "下一關";
+  }
+
+  messageScreen.style.display = "flex";
+}
+
+/* =========================
+   畫面繪製
+========================= */
+function drawBackground() {
+  const level = currentLevel();
+
+  if (level.theme === "night") {
+    const g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, "#07133d");
+    g.addColorStop(0.55, "#16215f");
+    g.addColorStop(1, "#24336f");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+
+    drawStars();
+
+    ctx.fillStyle = "#ffeaa8";
+    ctx.beginPath();
+    ctx.arc(W - 90, 85, 36, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = "#07133d";
+    ctx.beginPath();
+    ctx.arc(W - 75, 72, 35, 0, Math.PI * 2);
+    ctx.fill();
+
+    for (let i = 0; i < 8; i++) {
+      const x = (i * 420 - cameraX * 0.25) % (W + 520) - 180;
+      const y = 70 + (i % 3) * 52;
+      drawCloud(x, y, 1 + (i % 2) * 0.25, "rgba(185,205,255,.34)");
     }
 
-    restartBtn.style.display = "block";
-  }
-}
+    ctx.fillStyle = "#102d3e";
+    for (let i = 0; i < 8; i++) {
+      const x = i * 400 - cameraX * 0.16;
+      ctx.beginPath();
+      ctx.moveTo(x - 100, H - GROUND_H);
+      ctx.quadraticCurveTo(x + 120, H - 330, x + 330, H - GROUND_H);
+      ctx.fill();
+    }
 
-function drawBackground() {
-  ctx.fillStyle = "#6ec6ff";
-  ctx.fillRect(0, 0, W, H);
+    drawForestSilhouette();
+    ctx.fillStyle = "#204d38";
+    ctx.fillRect(0, H - GROUND_H - 28, W, 28);
 
-  for (let i = 0; i < 8; i++) {
-    const x = (i * 440 - cameraX * 0.25) % (W + 500) - 160;
-    const y = 55 + (i % 3) * 45;
-    drawCloud(x, y, 1 + (i % 2) * 0.25);
-  }
+  } else if (level.theme === "sunset") {
+    const g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, "#ff8a5c");
+    g.addColorStop(0.5, "#ffcf75");
+    g.addColorStop(1, "#7ad36b");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
 
-  ctx.fillStyle = "#44b95d";
-  for (let i = 0; i < 7; i++) {
-    const x = i * 420 - cameraX * 0.18;
+    ctx.fillStyle = "#ffdf6e";
     ctx.beginPath();
-    ctx.moveTo(x - 80, H - GROUND_H);
-    ctx.quadraticCurveTo(x + 120, H - 320, x + 320, H - GROUND_H);
+    ctx.arc(W - 115, 135, 55, 0, Math.PI * 2);
     ctx.fill();
-  }
 
-  ctx.fillStyle = "#62d85f";
-  ctx.fillRect(0, H - GROUND_H - 28, W, 28);
+    for (let i = 0; i < 8; i++) {
+      const x = (i * 440 - cameraX * 0.25) % (W + 500) - 160;
+      const y = 55 + (i % 3) * 45;
+      drawCloud(x, y, 1 + (i % 2) * 0.25, "rgba(255,245,220,.86)");
+    }
+
+    ctx.fillStyle = "#d46b5d";
+    for (let i = 0; i < 7; i++) {
+      const x = i * 420 - cameraX * 0.18;
+      ctx.beginPath();
+      ctx.moveTo(x - 80, H - GROUND_H);
+      ctx.quadraticCurveTo(x + 120, H - 320, x + 320, H - GROUND_H);
+      ctx.fill();
+    }
+
+    ctx.fillStyle = "#6bc95f";
+    ctx.fillRect(0, H - GROUND_H - 28, W, 28);
+
+  } else {
+    ctx.fillStyle = "#6ec6ff";
+    ctx.fillRect(0, 0, W, H);
+
+    for (let i = 0; i < 8; i++) {
+      const x = (i * 440 - cameraX * 0.25) % (W + 500) - 160;
+      const y = 55 + (i % 3) * 45;
+      drawCloud(x, y, 1 + (i % 2) * 0.25, "#fff");
+    }
+
+    ctx.fillStyle = "#44b95d";
+    for (let i = 0; i < 7; i++) {
+      const x = i * 420 - cameraX * 0.18;
+      ctx.beginPath();
+      ctx.moveTo(x - 80, H - GROUND_H);
+      ctx.quadraticCurveTo(x + 120, H - 320, x + 320, H - GROUND_H);
+      ctx.fill();
+    }
+
+    ctx.fillStyle = "#62d85f";
+    ctx.fillRect(0, H - GROUND_H - 28, W, 28);
+  }
 }
 
-function drawCloud(x, y, s) {
+function drawStars() {
+  ctx.fillStyle = "rgba(255,255,255,.85)";
+  for (let i = 0; i < 95; i++) {
+    const x = (i * 73 - cameraX * 0.08) % (W + 100);
+    const y = 20 + (i * 47) % Math.floor(H * 0.55);
+    const s = i % 7 === 0 ? 2 : 1;
+    ctx.fillRect(x, y, s, s);
+  }
+}
+
+function drawForestSilhouette() {
+  ctx.fillStyle = "#0d2a2d";
+  for (let i = 0; i < 22; i++) {
+    const x = (i * 90 - cameraX * 0.22) % (W + 180) - 90;
+    const base = H - GROUND_H - 28;
+    const h = 80 + (i % 5) * 22;
+
+    ctx.beginPath();
+    ctx.moveTo(x, base);
+    ctx.lineTo(x + 28, base - h);
+    ctx.lineTo(x + 56, base);
+    ctx.fill();
+
+    ctx.fillRect(x + 24, base - 12, 8, 22);
+  }
+}
+
+function drawCloud(x, y, s, color) {
   ctx.save();
   ctx.translate(x, y);
   ctx.scale(s, s);
 
-  ctx.fillStyle = "#fff";
+  ctx.fillStyle = color;
   ctx.fillRect(0, 20, 88, 28);
   ctx.beginPath();
   ctx.arc(18, 20, 18, 0, Math.PI * 2);
@@ -529,6 +854,8 @@ function drawCloud(x, y, s) {
 }
 
 function drawPlatforms() {
+  const level = currentLevel();
+
   for (const p of platforms) {
     const x = Math.floor(p.x - cameraX);
     if (x + p.w < -80 || x > W + 80) continue;
@@ -539,24 +866,49 @@ function drawPlatforms() {
       for (let tx = Math.floor((cameraX - 60) / tile) * tile; tx < cameraX + W + tile; tx += tile) {
         const sx = Math.floor(tx - cameraX);
 
-        ctx.fillStyle = "#b7652d";
-        ctx.fillRect(sx, p.y, tile, tile);
-
-        ctx.fillStyle = "#e58a3d";
-        ctx.fillRect(sx + 5, p.y + 5, tile - 10, tile - 10);
-
-        ctx.fillStyle = "rgba(80,35,10,.25)";
-        ctx.fillRect(sx, p.y + tile - 7, tile, 7);
+        if (level.theme === "night") {
+          ctx.fillStyle = "#4a3c68";
+          ctx.fillRect(sx, p.y, tile, tile);
+          ctx.fillStyle = "#5d4d84";
+          ctx.fillRect(sx + 5, p.y + 5, tile - 10, tile - 10);
+          ctx.fillStyle = "rgba(0,0,0,.28)";
+          ctx.fillRect(sx, p.y + tile - 7, tile, 7);
+        } else if (level.theme === "sunset") {
+          ctx.fillStyle = "#a85a30";
+          ctx.fillRect(sx, p.y, tile, tile);
+          ctx.fillStyle = "#dc7c3d";
+          ctx.fillRect(sx + 5, p.y + 5, tile - 10, tile - 10);
+          ctx.fillStyle = "rgba(80,35,10,.25)";
+          ctx.fillRect(sx, p.y + tile - 7, tile, 7);
+        } else {
+          ctx.fillStyle = "#b7652d";
+          ctx.fillRect(sx, p.y, tile, tile);
+          ctx.fillStyle = "#e58a3d";
+          ctx.fillRect(sx + 5, p.y + 5, tile - 10, tile - 10);
+          ctx.fillStyle = "rgba(80,35,10,.25)";
+          ctx.fillRect(sx, p.y + tile - 7, tile, 7);
+        }
       }
     } else {
       const tile = 38;
 
       for (let tx = x; tx < x + p.w; tx += tile) {
-        ctx.fillStyle = "#d9712c";
-        ctx.fillRect(tx, p.y, tile - 2, p.h);
-
-        ctx.fillStyle = "#ffb347";
-        ctx.fillRect(tx + 5, p.y + 5, tile - 12, 7);
+        if (level.theme === "night") {
+          ctx.fillStyle = "#56437d";
+          ctx.fillRect(tx, p.y, tile - 2, p.h);
+          ctx.fillStyle = "#7a66a6";
+          ctx.fillRect(tx + 5, p.y + 5, tile - 12, 7);
+        } else if (level.theme === "sunset") {
+          ctx.fillStyle = "#b85c38";
+          ctx.fillRect(tx, p.y, tile - 2, p.h);
+          ctx.fillStyle = "#ff9b57";
+          ctx.fillRect(tx + 5, p.y + 5, tile - 12, 7);
+        } else {
+          ctx.fillStyle = "#d9712c";
+          ctx.fillRect(tx, p.y, tile - 2, p.h);
+          ctx.fillStyle = "#ffb347";
+          ctx.fillRect(tx + 5, p.y + 5, tile - 12, 7);
+        }
 
         ctx.fillStyle = "rgba(0,0,0,.18)";
         ctx.fillRect(tx, p.y + p.h - 6, tile - 2, 6);
@@ -605,12 +957,12 @@ function drawEnemies() {
     ctx.save();
     ctx.translate(x + e.w / 2, e.y + e.h / 2);
 
-    ctx.fillStyle = "#8a5a2b";
+    ctx.fillStyle = currentLevel().theme === "night" ? "#5e4b8a" : "#8a5a2b";
     ctx.beginPath();
     ctx.ellipse(0, 4, 23, 20, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    ctx.fillStyle = "#6b3b1f";
+    ctx.fillStyle = currentLevel().theme === "night" ? "#382b58" : "#6b3b1f";
     ctx.beginPath();
     ctx.ellipse(0, 18, 26, 8, 0, 0, Math.PI * 2);
     ctx.fill();
@@ -638,7 +990,7 @@ function drawGoal() {
   ctx.fillStyle = "#fff";
   ctx.fillRect(x, H - GROUND_H - 190, 10, 190);
 
-  ctx.fillStyle = "#ff4b5c";
+  ctx.fillStyle = currentLevel().theme === "night" ? "#b9a7ff" : "#ff4b5c";
   ctx.beginPath();
   ctx.moveTo(x + 10, H - GROUND_H - 190);
   ctx.lineTo(x + 88, H - GROUND_H - 165);
@@ -810,23 +1162,24 @@ function drawNunu() {
 }
 
 function drawGameOver() {
-  if (!gameOver) return;
+  if (!gameOver || pausedForMessage) return;
 
   ctx.fillStyle = "rgba(255,255,255,.78)";
   ctx.fillRect(0, 0, W, H);
 
   ctx.fillStyle = "#7a3b00";
   ctx.textAlign = "center";
-  ctx.font = "900 34px system-ui";
+  ctx.font = "900 32px system-ui";
 
-  if (nunu.x > goalX) {
-    ctx.fillText("努努闖關成功！", W / 2, H / 2 - 60);
+  if (nunu.x > goalX && score < currentLevel().needCoins) {
+    ctx.fillText("金幣還不夠喔！", W / 2, H / 2 - 75);
+    ctx.font = "900 22px system-ui";
+    ctx.fillText(`第 ${currentLevel().no} 關需要 ${currentLevel().needCoins} 枚，目前 ${score} 枚`, W / 2, H / 2 - 35);
   } else {
-    ctx.fillText("努努先休息一下！", W / 2, H / 2 - 60);
+    ctx.fillText(`第 ${currentLevel().no} 關失敗，努努再試一次！`, W / 2, H / 2 - 60);
+    ctx.font = "900 22px system-ui";
+    ctx.fillText(`這次拿到 ${score} 枚金幣`, W / 2, H / 2 - 20);
   }
-
-  ctx.font = "900 24px system-ui";
-  ctx.fillText(`這次拿到 ${score} 枚金幣`, W / 2, H / 2 - 20);
 }
 
 function loop() {
@@ -841,7 +1194,7 @@ function loop() {
   requestAnimationFrame(loop);
 }
 
-reset();
+resetLevel(0, true);
 loop();
 </script>
 </body>
