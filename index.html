@@ -1,0 +1,848 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+<title>努努大冒險</title>
+
+<style>
+html, body {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background: #6ec6ff;
+  font-family: system-ui, "Noto Sans TC", sans-serif;
+  touch-action: none;
+}
+
+#game {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+  image-rendering: pixelated;
+}
+
+#ui {
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  right: 12px;
+  display: flex;
+  justify-content: space-between;
+  color: white;
+  font-size: 20px;
+  font-weight: 900;
+  text-shadow: 3px 3px 0 #3157a5;
+  pointer-events: none;
+}
+
+#hint {
+  position: fixed;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(255,255,255,.85);
+  color: #7a3b00;
+  padding: 10px 18px;
+  border-radius: 999px;
+  font-weight: 900;
+  pointer-events: none;
+}
+
+#startScreen {
+  position: fixed;
+  inset: 0;
+  background: linear-gradient(#6ec6ff, #b7f27a);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+}
+
+.startBox {
+  background: rgba(255,255,255,.92);
+  padding: 36px 32px;
+  border-radius: 24px;
+  text-align: center;
+  color: #7a3b00;
+  box-shadow: 0 10px 0 rgba(0,0,0,.18);
+}
+
+.startBox h1 {
+  margin: 0 0 12px;
+  font-size: 38px;
+  font-weight: 900;
+}
+
+.startBox p {
+  margin: 0 0 22px;
+  font-weight: 800;
+}
+
+#startBtn,
+#restart {
+  border: none;
+  background: #ffcf33;
+  color: #7a3b00;
+  font-size: 22px;
+  font-weight: 900;
+  padding: 14px 30px;
+  border-radius: 14px;
+  box-shadow: 0 8px 0 #d98900;
+}
+
+#restart {
+  position: fixed;
+  left: 50%;
+  top: 58%;
+  transform: translate(-50%, -50%);
+  display: none;
+}
+</style>
+</head>
+
+<body>
+<canvas id="game"></canvas>
+
+<div id="ui">
+  <div>金幣：<span id="score">0</span></div>
+  <div>生命：<span id="life">3</span></div>
+</div>
+
+<div id="hint">手機點螢幕跳躍｜電腦按空白鍵跳</div>
+
+<div id="startScreen">
+  <div class="startBox">
+    <h1>努努大冒險</h1>
+    <p>點螢幕跳躍，幫努努闖關！</p>
+    <button id="startBtn">開始遊戲</button>
+  </div>
+</div>
+
+<button id="restart">再玩一次</button>
+
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+const scoreEl = document.getElementById("score");
+const lifeEl = document.getElementById("life");
+const startScreen = document.getElementById("startScreen");
+const startBtn = document.getElementById("startBtn");
+const restartBtn = document.getElementById("restart");
+
+let W, H, DPR;
+
+function resize() {
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = window.innerWidth;
+  H = window.innerHeight;
+  canvas.width = W * DPR;
+  canvas.height = H * DPR;
+  canvas.style.width = W + "px";
+  canvas.style.height = H + "px";
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+window.addEventListener("resize", resize);
+resize();
+
+/* =========================
+   音效與背景音樂
+========================= */
+let audioCtx;
+let musicTimer = null;
+let musicStep = 0;
+let winSoundPlayed = false;
+
+function initAudio() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+
+  if (audioCtx.state === "suspended") {
+    audioCtx.resume();
+  }
+}
+
+function playTone(freq, duration, type = "square", volume = 0.08) {
+  if (!audioCtx) return;
+
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+
+  osc.type = type;
+  osc.frequency.value = freq;
+
+  gain.gain.setValueAtTime(volume, audioCtx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+
+  osc.connect(gain);
+  gain.connect(audioCtx.destination);
+
+  osc.start();
+  osc.stop(audioCtx.currentTime + duration);
+}
+
+function playJumpSound() {
+  playTone(420, 0.08, "square", 0.075);
+  setTimeout(() => playTone(620, 0.08, "square", 0.06), 55);
+}
+
+function playCoinSound() {
+  playTone(880, 0.07, "square", 0.08);
+  setTimeout(() => playTone(1320, 0.09, "square", 0.07), 70);
+}
+
+function playStompSound() {
+  playTone(180, 0.08, "square", 0.08);
+  setTimeout(() => playTone(300, 0.08, "square", 0.06), 70);
+}
+
+function playHurtSound() {
+  playTone(280, 0.12, "sawtooth", 0.08);
+  setTimeout(() => playTone(180, 0.16, "sawtooth", 0.06), 100);
+}
+
+function playWinBark() {
+  playTone(520, 0.12, "triangle", 0.12);
+  setTimeout(() => playTone(760, 0.13, "triangle", 0.12), 150);
+  setTimeout(() => playTone(620, 0.10, "triangle", 0.10), 320);
+  setTimeout(() => playTone(900, 0.16, "triangle", 0.12), 470);
+  setTimeout(() => playTone(760, 0.16, "triangle", 0.1), 680);
+}
+
+function startMusic() {
+  if (!audioCtx || musicTimer) return;
+
+  const notes = [
+    262, 330, 392, 523,
+    392, 330, 294, 392,
+    262, 330, 392, 659,
+    587, 523, 392, 330
+  ];
+
+  musicTimer = setInterval(() => {
+    if (!started || gameOver) return;
+
+    const note = notes[musicStep % notes.length];
+    playTone(note, 0.12, "square", 0.03);
+
+    if (musicStep % 4 === 0) {
+      playTone(note / 2, 0.16, "triangle", 0.018);
+    }
+
+    musicStep++;
+  }, 180);
+}
+
+function stopMusic() {
+  if (musicTimer) {
+    clearInterval(musicTimer);
+    musicTimer = null;
+  }
+}
+
+/* =========================
+   遊戲設定
+========================= */
+const GROUND_H = 86;
+const GRAVITY = 0.75;
+const JUMP_POWER = -15.3;
+const AUTO_SPEED = 3.25;
+
+let started = false;
+let cameraX = 0;
+let frame = 0;
+let score = 0;
+let life = 3;
+let gameOver = false;
+let goalX = 3200;
+
+const keys = { jump: false };
+
+const nunu = {
+  x: 120,
+  y: 0,
+  w: 74,
+  h: 58,
+  vx: AUTO_SPEED,
+  vy: 0,
+  face: 1,
+  onGround: false,
+  invincible: 0
+};
+
+let platforms = [];
+let coins = [];
+let enemies = [];
+
+startBtn.addEventListener("click", () => {
+  initAudio();
+  startMusic();
+  started = true;
+  startScreen.style.display = "none";
+});
+
+restartBtn.addEventListener("click", () => {
+  reset();
+  initAudio();
+  startMusic();
+  started = true;
+});
+
+window.addEventListener("keydown", e => {
+  if (e.key === " " || e.key === "ArrowUp" || e.key.toLowerCase() === "w") {
+    keys.jump = true;
+  }
+});
+
+window.addEventListener("keyup", e => {
+  if (e.key === " " || e.key === "ArrowUp" || e.key.toLowerCase() === "w") {
+    keys.jump = false;
+  }
+});
+
+canvas.addEventListener("pointerdown", e => {
+  e.preventDefault();
+  keys.jump = true;
+});
+
+canvas.addEventListener("pointerup", e => {
+  e.preventDefault();
+  keys.jump = false;
+});
+
+canvas.addEventListener("pointercancel", () => {
+  keys.jump = false;
+});
+
+function updateUI() {
+  scoreEl.textContent = score;
+  lifeEl.textContent = life;
+}
+
+function reset() {
+  cameraX = 0;
+  frame = 0;
+  score = 0;
+  life = 3;
+  gameOver = false;
+  winSoundPlayed = false;
+  restartBtn.style.display = "none";
+
+  nunu.x = 120;
+  nunu.y = H - GROUND_H - nunu.h;
+  nunu.vx = AUTO_SPEED;
+  nunu.vy = 0;
+  nunu.face = 1;
+  nunu.onGround = false;
+  nunu.invincible = 0;
+
+  platforms = [
+    { x: 0, y: H - GROUND_H, w: goalX + 700, h: GROUND_H, type: "ground" },
+    { x: 420, y: H - 205, w: 150, h: 28, type: "brick" },
+    { x: 760, y: H - 275, w: 170, h: 28, type: "brick" },
+    { x: 1160, y: H - 220, w: 190, h: 28, type: "brick" },
+    { x: 1600, y: H - 305, w: 160, h: 28, type: "brick" },
+    { x: 2000, y: H - 235, w: 220, h: 28, type: "brick" },
+    { x: 2470, y: H - 285, w: 170, h: 28, type: "brick" },
+    { x: 2830, y: H - 215, w: 210, h: 28, type: "brick" }
+  ];
+
+  coins = [];
+  for (let i = 0; i < 34; i++) {
+    coins.push({
+      x: 260 + i * 88,
+      y: H - 155 - Math.sin(i * 0.8) * 60,
+      r: 15,
+      got: false
+    });
+  }
+
+  coins.push(
+    { x: 475, y: H - 250, r: 15, got: false },
+    { x: 820, y: H - 320, r: 15, got: false },
+    { x: 1670, y: H - 355, r: 15, got: false },
+    { x: 2550, y: H - 335, r: 15, got: false }
+  );
+
+  enemies = [
+    { x: 620, y: H - GROUND_H - 36, w: 42, h: 36, vx: -1.2, alive: true },
+    { x: 1030, y: H - GROUND_H - 36, w: 42, h: 36, vx: 1.1, alive: true },
+    { x: 1480, y: H - GROUND_H - 36, w: 42, h: 36, vx: -1.3, alive: true },
+    { x: 2300, y: H - GROUND_H - 36, w: 42, h: 36, vx: 1.4, alive: true },
+    { x: 2920, y: H - GROUND_H - 36, w: 42, h: 36, vx: -1.5, alive: true }
+  ];
+
+  updateUI();
+}
+
+function rectsOverlap(a, b) {
+  return a.x < b.x + b.w &&
+         a.x + a.w > b.x &&
+         a.y < b.y + b.h &&
+         a.y + a.h > b.y;
+}
+
+function update() {
+  frame++;
+
+  if (!started || gameOver) return;
+
+  nunu.vx = AUTO_SPEED;
+  nunu.face = 1;
+
+  if (keys.jump && nunu.onGround) {
+    nunu.vy = JUMP_POWER;
+    nunu.onGround = false;
+    playJumpSound();
+  }
+
+  nunu.vy += GRAVITY;
+  nunu.x += nunu.vx;
+  nunu.y += nunu.vy;
+  nunu.onGround = false;
+
+  for (const p of platforms) {
+    if (rectsOverlap(nunu, p)) {
+      if (nunu.vy >= 0 && nunu.y + nunu.h - nunu.vy <= p.y + 8) {
+        nunu.y = p.y - nunu.h;
+        nunu.vy = 0;
+        nunu.onGround = true;
+      }
+    }
+  }
+
+  cameraX = Math.max(0, nunu.x - W * 0.32);
+
+  coins.forEach(c => {
+    if (!c.got) {
+      const dx = nunu.x + nunu.w / 2 - c.x;
+      const dy = nunu.y + nunu.h / 2 - c.y;
+      if (Math.hypot(dx, dy) < c.r + 34) {
+        c.got = true;
+        score++;
+        playCoinSound();
+        updateUI();
+      }
+    }
+  });
+
+  enemies.forEach(e => {
+    if (!e.alive) return;
+
+    e.x += e.vx;
+
+    if (e.x < cameraX - 80) e.vx = Math.abs(e.vx);
+    if (e.x > cameraX + W + 80) e.vx = -Math.abs(e.vx);
+
+    if (rectsOverlap(nunu, e)) {
+      if (nunu.vy > 3 && nunu.y + nunu.h - nunu.vy < e.y + 8) {
+        e.alive = false;
+        nunu.vy = -10;
+        score += 2;
+        playStompSound();
+        updateUI();
+      } else if (nunu.invincible <= 0) {
+        life--;
+        nunu.invincible = 90;
+        nunu.vy = -8;
+        playHurtSound();
+        updateUI();
+
+        if (life <= 0) {
+          gameOver = true;
+          stopMusic();
+          restartBtn.style.display = "block";
+        }
+      }
+    }
+  });
+
+  if (nunu.invincible > 0) nunu.invincible--;
+
+  if (nunu.y > H + 200) {
+    life--;
+    playHurtSound();
+    updateUI();
+
+    nunu.x = Math.max(120, cameraX + 120);
+    nunu.y = H - GROUND_H - nunu.h - 80;
+    nunu.vy = 0;
+
+    if (life <= 0) {
+      gameOver = true;
+      stopMusic();
+      restartBtn.style.display = "block";
+    }
+  }
+
+  if (nunu.x > goalX) {
+    gameOver = true;
+    stopMusic();
+
+    if (!winSoundPlayed) {
+      winSoundPlayed = true;
+      playWinBark();
+    }
+
+    restartBtn.style.display = "block";
+  }
+}
+
+function drawBackground() {
+  ctx.fillStyle = "#6ec6ff";
+  ctx.fillRect(0, 0, W, H);
+
+  for (let i = 0; i < 8; i++) {
+    const x = (i * 440 - cameraX * 0.25) % (W + 500) - 160;
+    const y = 55 + (i % 3) * 45;
+    drawCloud(x, y, 1 + (i % 2) * 0.25);
+  }
+
+  ctx.fillStyle = "#44b95d";
+  for (let i = 0; i < 7; i++) {
+    const x = i * 420 - cameraX * 0.18;
+    ctx.beginPath();
+    ctx.moveTo(x - 80, H - GROUND_H);
+    ctx.quadraticCurveTo(x + 120, H - 320, x + 320, H - GROUND_H);
+    ctx.fill();
+  }
+
+  ctx.fillStyle = "#62d85f";
+  ctx.fillRect(0, H - GROUND_H - 28, W, 28);
+}
+
+function drawCloud(x, y, s) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(s, s);
+
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 20, 88, 28);
+  ctx.beginPath();
+  ctx.arc(18, 20, 18, 0, Math.PI * 2);
+  ctx.arc(44, 8, 24, 0, Math.PI * 2);
+  ctx.arc(72, 20, 18, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+}
+
+function drawPlatforms() {
+  for (const p of platforms) {
+    const x = Math.floor(p.x - cameraX);
+    if (x + p.w < -80 || x > W + 80) continue;
+
+    if (p.type === "ground") {
+      const tile = 48;
+
+      for (let tx = Math.floor((cameraX - 60) / tile) * tile; tx < cameraX + W + tile; tx += tile) {
+        const sx = Math.floor(tx - cameraX);
+
+        ctx.fillStyle = "#b7652d";
+        ctx.fillRect(sx, p.y, tile, tile);
+
+        ctx.fillStyle = "#e58a3d";
+        ctx.fillRect(sx + 5, p.y + 5, tile - 10, tile - 10);
+
+        ctx.fillStyle = "rgba(80,35,10,.25)";
+        ctx.fillRect(sx, p.y + tile - 7, tile, 7);
+      }
+    } else {
+      const tile = 38;
+
+      for (let tx = x; tx < x + p.w; tx += tile) {
+        ctx.fillStyle = "#d9712c";
+        ctx.fillRect(tx, p.y, tile - 2, p.h);
+
+        ctx.fillStyle = "#ffb347";
+        ctx.fillRect(tx + 5, p.y + 5, tile - 12, 7);
+
+        ctx.fillStyle = "rgba(0,0,0,.18)";
+        ctx.fillRect(tx, p.y + p.h - 6, tile - 2, 6);
+      }
+    }
+  }
+}
+
+function drawCoins() {
+  coins.forEach(c => {
+    if (c.got) return;
+
+    const x = c.x - cameraX;
+    if (x < -50 || x > W + 50) return;
+
+    const spin = 0.55 + Math.abs(Math.sin(frame * 0.12 + c.x)) * 0.45;
+
+    ctx.save();
+    ctx.translate(x, c.y);
+    ctx.scale(spin, 1);
+
+    ctx.fillStyle = "#ffd83d";
+    ctx.beginPath();
+    ctx.arc(0, 0, c.r, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = "#fff176";
+    ctx.beginPath();
+    ctx.arc(-5, -6, c.r * 0.35, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = "#d99000";
+    ctx.fillRect(-3, -10, 6, 20);
+
+    ctx.restore();
+  });
+}
+
+function drawEnemies() {
+  enemies.forEach(e => {
+    if (!e.alive) return;
+
+    const x = e.x - cameraX;
+    if (x < -80 || x > W + 80) return;
+
+    ctx.save();
+    ctx.translate(x + e.w / 2, e.y + e.h / 2);
+
+    ctx.fillStyle = "#8a5a2b";
+    ctx.beginPath();
+    ctx.ellipse(0, 4, 23, 20, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = "#6b3b1f";
+    ctx.beginPath();
+    ctx.ellipse(0, 18, 26, 8, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = "#fff";
+    ctx.beginPath();
+    ctx.arc(-8, -4, 5, 0, Math.PI * 2);
+    ctx.arc(8, -4, 5, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = "#111";
+    ctx.beginPath();
+    ctx.arc(-7, -3, 2, 0, Math.PI * 2);
+    ctx.arc(9, -3, 2, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+  });
+}
+
+function drawGoal() {
+  const x = goalX - cameraX;
+  if (x < -100 || x > W + 100) return;
+
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(x, H - GROUND_H - 190, 10, 190);
+
+  ctx.fillStyle = "#ff4b5c";
+  ctx.beginPath();
+  ctx.moveTo(x + 10, H - GROUND_H - 190);
+  ctx.lineTo(x + 88, H - GROUND_H - 165);
+  ctx.lineTo(x + 10, H - GROUND_H - 140);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle = "#ffd83d";
+  ctx.font = "900 20px system-ui";
+  ctx.fillText("GO!", x + 24, H - GROUND_H - 158);
+}
+
+function drawNunu() {
+  if (nunu.invincible > 0 && frame % 8 < 4) return;
+
+  const x = nunu.x - cameraX;
+  const y = nunu.y;
+  const bob = nunu.onGround ? Math.sin(frame * 0.25) * 2 : 0;
+
+  ctx.save();
+  ctx.translate(x + nunu.w / 2, y + nunu.h / 2 + bob);
+  ctx.scale(nunu.face, 1);
+
+  ctx.fillStyle = "rgba(0,0,0,.18)";
+  ctx.beginPath();
+  ctx.ellipse(-2, 36, 42, 10, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = "#fffdf4";
+  ctx.lineWidth = 8;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(-38, -7);
+  ctx.quadraticCurveTo(-56, -28, -69, -10);
+  ctx.stroke();
+
+  ctx.fillStyle = "#fffdf4";
+  ctx.beginPath();
+  ctx.ellipse(-10, 8, 38, 25, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "#7a5238";
+  ctx.beginPath();
+  ctx.arc(-26, 3, 4, 0, Math.PI * 2);
+  ctx.arc(-3, 22, 3, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = "#fffdf4";
+  ctx.lineWidth = 7;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+
+  if (nunu.onGround) {
+    ctx.moveTo(-28, 28); ctx.lineTo(-34, 42);
+    ctx.moveTo(-4, 30); ctx.lineTo(0, 44);
+    ctx.moveTo(16, 27); ctx.lineTo(23, 40);
+  } else {
+    ctx.moveTo(-24, 26); ctx.lineTo(-34, 32);
+    ctx.moveTo(4, 28); ctx.lineTo(14, 34);
+    ctx.moveTo(20, 23); ctx.lineTo(30, 27);
+  }
+
+  ctx.stroke();
+
+  ctx.fillStyle = "#ff4b5c";
+  ctx.beginPath();
+  ctx.ellipse(17, 18, 16, 6, -0.18, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "#2ec4ff";
+  ctx.beginPath();
+  ctx.ellipse(11, 18, 5, 5, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "#ffd83d";
+  ctx.beginPath();
+  ctx.arc(18, 26, 5, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.save();
+  ctx.translate(34, -6);
+
+  ctx.fillStyle = "#7b5136";
+
+  ctx.beginPath();
+  ctx.moveTo(-8, -18);
+  ctx.quadraticCurveTo(-18, -48, -4, -55);
+  ctx.quadraticCurveTo(8, -40, 6, -19);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.moveTo(19, -18);
+  ctx.quadraticCurveTo(21, -50, 36, -52);
+  ctx.quadraticCurveTo(43, -34, 33, -14);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle = "rgba(255,197,176,.62)";
+
+  ctx.beginPath();
+  ctx.moveTo(-4, -28);
+  ctx.quadraticCurveTo(-10, -43, -4, -48);
+  ctx.quadraticCurveTo(3, -38, 2, -27);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.moveTo(28, -26);
+  ctx.quadraticCurveTo(29, -42, 35, -45);
+  ctx.quadraticCurveTo(38, -34, 31, -24);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle = "#7b5136";
+  ctx.beginPath();
+  ctx.ellipse(12, 0, 30, 27, 0.05, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "#fffdf4";
+  ctx.beginPath();
+  ctx.moveTo(7, -25);
+  ctx.quadraticCurveTo(20, -10, 19, 5);
+  ctx.quadraticCurveTo(17, 22, 4, 25);
+  ctx.quadraticCurveTo(-5, 7, 0, -11);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.ellipse(28, 10, 16, 11, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = "#3f291b";
+  ctx.lineWidth = 3;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(-6, -12); ctx.lineTo(8, -7);
+  ctx.moveTo(-7, 0); ctx.lineTo(7, 3);
+  ctx.moveTo(33, -13); ctx.lineTo(19, -8);
+  ctx.moveTo(36, -2); ctx.lineTo(24, 1);
+  ctx.stroke();
+
+  ctx.fillStyle = "#111";
+  ctx.beginPath();
+  ctx.arc(7, -8, 3.8, 0, Math.PI * 2);
+  ctx.arc(29, -8, 3.8, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "#fff";
+  ctx.beginPath();
+  ctx.arc(8, -9, 1.4, 0, Math.PI * 2);
+  ctx.arc(30, -9, 1.4, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "#211711";
+  ctx.beginPath();
+  ctx.ellipse(42, 6, 5, 4, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = "#211711";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(38, 13);
+  ctx.quadraticCurveTo(31, 20, 24, 14);
+  ctx.stroke();
+
+  ctx.restore();
+  ctx.restore();
+}
+
+function drawGameOver() {
+  if (!gameOver) return;
+
+  ctx.fillStyle = "rgba(255,255,255,.78)";
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.fillStyle = "#7a3b00";
+  ctx.textAlign = "center";
+  ctx.font = "900 34px system-ui";
+
+  if (nunu.x > goalX) {
+    ctx.fillText("努努闖關成功！", W / 2, H / 2 - 60);
+  } else {
+    ctx.fillText("努努先休息一下！", W / 2, H / 2 - 60);
+  }
+
+  ctx.font = "900 24px system-ui";
+  ctx.fillText(`這次拿到 ${score} 枚金幣`, W / 2, H / 2 - 20);
+}
+
+function loop() {
+  update();
+  drawBackground();
+  drawPlatforms();
+  drawCoins();
+  drawEnemies();
+  drawGoal();
+  drawNunu();
+  drawGameOver();
+  requestAnimationFrame(loop);
+}
+
+reset();
+loop();
+</script>
+</body>
+</html>
